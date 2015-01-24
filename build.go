@@ -21,6 +21,7 @@ var buildCommand = cli.Command{
 		cli.StringFlag{Name: "channel", Usage: "channel to identify as"},
 		cli.DurationFlag{Name: "timeout", Value: 5 * time.Minute, Usage: "set the message build timeout"},
 		cli.IntFlag{Name: "concurrency,c", Value: 2, Usage: "number of concurrent builds to process"},
+		cli.StringFlag{Name: "error-topic", Usage: "topic to publish errors to"},
 	},
 	Action: buildAction,
 }
@@ -34,7 +35,14 @@ func buildAction(context *cli.Context) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	consumer.AddConcurrentHandlers(&handler{}, context.Int("c"))
+	producer, err := nsq.NewProducer(context.String("nsqd"), config)
+	if err != nil {
+		log.Fatal(err)
+	}
+	consumer.AddConcurrentHandlers(&handler{
+		producer: producer,
+		topic:    context.String("error-topic"),
+	}, context.Int("c"))
 	if err := consumer.ConnectToNSQD(context.String("nsqd")); err != nil {
 		log.Fatal(err)
 	}
@@ -49,8 +57,16 @@ func buildAction(context *cli.Context) {
 }
 
 type handler struct {
+	// have a handle on the producer to report errors back in a way that we can view
+	producer *nsq.Producer
+	topic    string
 }
 
 func (h *handler) HandleMessage(m *nsq.Message) error {
-	return exec.Command("docker", "build", "--force-rm", "-q", string(m.Body)).Run()
+	if err := exec.Command("docker", "build", "--force-rm", "-q", string(m.Body)).Run(); err != nil {
+		if err := h.producer.Publish(h.topic, m.Body); err != nil {
+			return err
+		}
+	}
+	return nil
 }

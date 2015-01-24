@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -31,6 +32,7 @@ func buildAction(context *cli.Context) {
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	config := nsq.NewConfig()
 	config.MsgTimeout = context.Duration("timeout")
+	config.MaxInFlight = context.Int("c")
 	consumer, err := nsq.NewConsumer(context.String("topic"), context.String("channel"), config)
 	if err != nil {
 		log.Fatal(err)
@@ -42,6 +44,7 @@ func buildAction(context *cli.Context) {
 	consumer.AddConcurrentHandlers(&handler{
 		producer: producer,
 		topic:    context.String("error-topic"),
+		channel:  context.String("channel"),
 	}, context.Int("c"))
 	if err := consumer.ConnectToNSQD(context.String("nsqd")); err != nil {
 		log.Fatal(err)
@@ -60,11 +63,27 @@ type handler struct {
 	// have a handle on the producer to report errors back in a way that we can view
 	producer *nsq.Producer
 	topic    string
+	channel  string
+}
+
+type failure struct {
+	Url     string `json:"url"`
+	Log     []byte `json:"log"`
+	Channel string `json:"channel"`
 }
 
 func (h *handler) HandleMessage(m *nsq.Message) error {
-	if err := exec.Command("docker", "build", "--force-rm", "-q", string(m.Body)).Run(); err != nil {
-		if err := h.producer.Publish(h.topic, m.Body); err != nil {
+	cmd := exec.Command("docker", "build", "--force-rm", "-q", string(m.Body))
+	if data, err := cmd.CombinedOutput(); err != nil {
+		j, err := json.Marshal(failure{
+			Url:     string(m.Body),
+			Log:     data,
+			Channel: h.channel,
+		})
+		if err != nil {
+			return err
+		}
+		if err := h.producer.Publish(h.topic, j); err != nil {
 			return err
 		}
 	}

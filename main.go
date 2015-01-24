@@ -14,6 +14,7 @@ func main() {
 	app.Commands = []cli.Command{
 		pushCommand,
 		buildCommand,
+		failCommand,
 	}
 	if err := app.Run(os.Args); err != nil {
 		log.Fatal(err)

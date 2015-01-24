@@ -45,7 +45,7 @@ func (h *failHandler) HandleMessage(m *nsq.Message) error {
 	if err := json.Unmarshal(m.Body, &f); err != nil {
 		return err
 	}
-	fmt.Printf("URL:%s\nCHANNEL: %s\n\n", f.Url, f.Channel)
+	fmt.Printf("URL:%s\nCHANNEL: %s\n", f.Url, f.Channel)
 	fmt.Printf("LOG:\n%s", f.Log)
 	h.stopper.Stop()
 	return nil
